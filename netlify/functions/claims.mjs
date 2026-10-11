@@ -1,13 +1,14 @@
 import { getStore } from "@netlify/blobs";
+import { notifyAll } from "../lib/push.mjs";
 
 const TTL_MS = (Number(Netlify.env.get("CLAIM_TTL_HOURS")) || 2) * 3600 * 1000;
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
-export default async (req) => {
+export default async (req, context) => {
   try {
-    return await handle(req);
+    return await handle(req, context);
   } catch (e) {
     return json({ error: String((e && e.message) || e) }, 500);
   }
@@ -26,7 +27,7 @@ async function readClaim(store, id) {
   return c;
 }
 
-async function handle(req) {
+async function handle(req, context) {
   const key = Netlify.env.get("ACCESS_KEY") || "";
   if (key && req.headers.get("x-key") !== key) return json({}, 401);
   const client = req.headers.get("x-client") || "";
@@ -58,6 +59,9 @@ async function handle(req) {
       if (cur) return cur.client === client ? json({}) : json({}, 409);
       const name = String(d.name || "").trim().slice(0, 30) || "Someone";
       await store.set(id, JSON.stringify({ client, name, at: Date.now() }));
+      const stationName = String(d.stationName || "a station").trim().slice(0, 60);
+      const p = notifyAll(client, { title: "Station claimed", body: `${name} claimed ${stationName}`, tag: "claim-" + id }).catch(() => {});
+      if (context && typeof context.waitUntil === "function") context.waitUntil(p); else await p;
       return json({});
     }
     if (d.action === "release") {
