@@ -1,4 +1,3 @@
-
 import { getStore } from "@netlify/blobs";
 
 const json = (obj, status = 200) =>
@@ -18,7 +17,7 @@ async function handle(req) {
   const client = req.headers.get("x-client") || "";
   if (!client) return json({}, 400);
 
-  const store = getStore("claims");
+  const store = getStore({ name: "claims", consistency: "strong" });
 
   if (req.method === "GET") {
     const { blobs } = await store.list();
