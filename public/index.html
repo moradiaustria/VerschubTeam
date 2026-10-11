@@ -197,7 +197,7 @@
           </li>`;
       }).join('');
       document.getElementById('foot').innerHTML = claimsCol
-        ? `<a href="#" data-foot="name">Name: ${escapeHtml(store.get('userName') || 'not set')}</a> · <a href="#" data-foot="admin">${admin ? 'Admin: on (tap to turn off)' : 'Admin'}</a>`
+        ? (pushSupported ? `<a href="#" data-foot="push">🔔 Notifications: ${pushOn ? 'on' : 'off'}</a> · ` : '') + `<a href="#" data-foot="name">Name: ${escapeHtml(store.get('userName') || 'not set')}</a> · <a href="#" data-foot="admin">${admin ? 'Admin: on (tap to turn off)' : 'Admin'}</a>`
         : '';
     }
 
@@ -227,6 +227,7 @@
       const a = e.target.closest('a[data-foot]');
       if (!a) return;
       e.preventDefault();
+      if (a.dataset.foot === 'push') { await togglePush(); return; }
       if (a.dataset.foot === 'name') ensureName(true);
       else if (store.get('adminKey')) store.set('adminKey', '');
       else {
@@ -258,7 +259,7 @@
       if (act === 'claim') claims.set(id, pending.get(id)); else claims.delete(id);
       render();
       try {
-        const r = await api('POST', { id, action: act, name: userName });
+        const r = await api('POST', { id, action: act, name: userName, stationName: name });
         if (!r.ok && r.status !== 409) { let t = ''; try { t = (await r.json()).error || ''; } catch {} throw new Error('HTTP ' + r.status + ' ' + t); }
         pending.delete(id);
         if (r.status === 409) await loadClaims();
@@ -285,6 +286,64 @@
         headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': store.get('accessKey'), 'X-Admin': store.get('adminKey') },
         body: body ? JSON.stringify(body) : undefined
       });
+    }
+
+
+    // ---- Push notifications ----
+    let pushOn = false;
+    const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    const pushUrl = apiUrl.replace(/claims$/, 'push');
+    const swBase = apiUrl.replace(/api\/claims$/, '');
+
+    function pushApi(method, body) {
+      return fetch(pushUrl, {
+        method, cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': store.get('accessKey') },
+        body: body ? JSON.stringify(body) : undefined
+      });
+    }
+    const b64ToBytes = s => {
+      const raw = atob((s + '='.repeat((4 - s.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+      return Uint8Array.from(raw, c => c.charCodeAt(0));
+    };
+    async function getReg() {
+      const reg = await navigator.serviceWorker.register(swBase + 'sw.js', { scope: swBase });
+      if (!reg.active) {
+        const sw = reg.installing || reg.waiting;
+        if (sw) await new Promise(res => sw.addEventListener('statechange', () => { if (sw.state === 'activated') res(); }));
+      }
+      return reg;
+    }
+    async function refreshPush() {
+      if (!pushSupported) return;
+      try {
+        const reg = await navigator.serviceWorker.getRegistration(swBase);
+        const sub = reg && await reg.pushManager.getSubscription();
+        pushOn = !!sub && Notification.permission === 'granted';
+      } catch { pushOn = false; }
+      render();
+    }
+    async function togglePush() {
+      try {
+        if (pushOn) {
+          const reg = await getReg();
+          const cur = await reg.pushManager.getSubscription();
+          await pushApi('POST', { action: 'unsubscribe' });
+          if (cur) await cur.unsubscribe();
+          pushOn = false;
+        } else {
+          if (Notification.permission === 'denied') { alert('Notifications are blocked. Enable them in the browser/site settings.'); return; }
+          const perm = await Notification.requestPermission();
+          if (perm !== 'granted') return;
+          const reg = await getReg();
+          const k = await (await pushApi('GET')).json();
+          const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(k.publicKey) });
+          const r = await pushApi('POST', { action: 'subscribe', subscription: sub.toJSON() });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          pushOn = true;
+        }
+      } catch (e) { alert('Notifications failed: ' + e.message); }
+      render();
     }
 
     async function loadClaims() {
@@ -352,6 +411,7 @@
 
     updateTable();
     initClaims();
+    refreshPush();
   </script>
 </body>
 </html>
