@@ -214,8 +214,10 @@
       } catch { return null; }
     })();
 
+    const apiUrl = location.pathname.replace(/index\.html$/, '').replace(/\/?$/, '/') + 'api/claims';
+
     function api(method, body) {
-      return fetch('api/claims', {
+      return fetch(apiUrl, {
         method, cache: 'no-store',
         headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': localStorage.getItem('accessKey') || '' },
         body: body ? JSON.stringify(body) : undefined
