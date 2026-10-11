@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Stadtrad Innsbruck Stations</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f6f8; --card: #fff; --text: #16181d; --muted: #6b7280; --line: #e3e5ea;
+      --add: #1a7f37; --add-bg: #e6f6ea; --remove: #c0352b; --remove-bg: #fdebea;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #101215; --card: #1a1d22; --text: #eceef2; --muted: #9aa1ad; --line: #2a2e36;
+        --add: #56d364; --add-bg: #12301b; --remove: #ff7b72; --remove-bg: #3a1815;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+               max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    }
+    main { max-width: 640px; margin: 0 auto; }
+    h1 { font-size: 1.3rem; margin: 4px 0 2px; }
+    .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    #meta { color: var(--muted); font-size: .85rem; }
+    #refresh {
+      flex: none; font: inherit; font-weight: 600; font-size: .9rem; cursor: pointer;
+      padding: 8px 16px; border-radius: 999px; border: 1px solid var(--line);
+      background: var(--card); color: var(--text);
+    }
+    #refresh:active { transform: scale(.97); }
+    #refresh:disabled { opacity: .6; cursor: default; }
+    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    li {
+      display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center;
+      background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+      border-left-width: 6px;
+    }
+    li.add { border-left-color: var(--add); }
+    li.remove { border-left-color: var(--remove); }
+    .name { font-weight: 600; overflow-wrap: anywhere; }
+    .count { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; line-height: 1; }
+    .count small { display: block; font-size: .65rem; font-weight: 500; color: var(--muted); margin-top: 2px; }
+    .action {
+      grid-column: 1 / -1; margin-top: 6px; padding: 6px 10px; border-radius: 8px;
+      font-size: .92rem; font-weight: 600;
+    }
+    li.add .action { background: var(--add-bg); color: var(--add); }
+    li.remove .action { background: var(--remove-bg); color: var(--remove); }
+    .claim { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: .88rem; }
+    .claim .who { color: var(--muted); }
+    li.claimed .who { color: var(--text); font-weight: 600; }
+    li.claimed { opacity: .92; }
+    .cbtn { font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+    .cbtn:disabled { opacity: .5; cursor: default; }
+    dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text); padding: 18px; max-width: 320px; width: calc(100% - 40px); }
+    dialog::backdrop { background: rgba(0,0,0,.5); }
+    dialog p { margin: 0 0 14px; font-weight: 600; overflow-wrap: anywhere; }
+    dialog .row { display: flex; gap: 8px; justify-content: flex-end; }
+    .msg { text-align: center; color: var(--muted); padding: 24px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Stadtrad Innsbruck Stations</h1>
+    <div class="bar">
+      <div id="meta">Loading live data…</div>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+    <ul id="stations" aria-live="polite"></ul>
+  </main>
+
+  <dialog id="dlg">
+    <p id="dlgText"></p>
+    <div class="row">
+      <button class="cbtn" id="dlgNo" type="button">No</button>
+      <button class="cbtn" id="dlgYes" type="button">Yes</button>
+    </div>
+  </dialog>
+
+  <script>
+    const infoUrl = 'https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_si/de/station_information.json';
+    const statusUrl = 'https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_si/de/station_status.json';
+    const list = document.getElementById('stations');
+    const meta = document.getElementById('meta');
+
+    // Rule: { add|remove: limit, before: hour, from: hour }
+    // add: triggers when bikes < limit (stops at limit or more)
+    // remove: triggers when bikes > limit (stops at limit or fewer)
+    const rules = {
+      'Mitterweg':                [{ remove: 25 }],
+      'Hauptbahnhof':             [{ add: 5, before: 9 }],
+      'Westbahnhof':              [{ add: 5, before: 9 }, { add: 50, from: 14 }],
+      'Stubaitalbahnhof':         [{ add: 10, before: 18 }],
+      'SOWI/MCI':                 [{ remove: 5 }],
+      'Schöpfstraße / Klinik':    [{ remove: 50, before: 11 }],
+      'Maximilianstraße':         [{ remove: 25 }],
+      'Mühlauer Brücke':          [{ add: 1 }],
+      'Congress / Hofburg':       [{ remove: 5 }],
+      'Fürstenweg':               [{ add: 1, before: 11 }],
+      'Mariahilfpark':            [{ add: 10 }],
+      'UNI-Sportstätten':         [{ remove: 5 }],
+      'Philippine-Welser-Straße': [{ remove: 20 }],
+      'Valiergasse':              [{ add: 10, from: 16 }],
+      'Grabenweg':                [{ add: 10 }],
+      'Hegnerstraße':             [{ remove: 20 }],
+      'Flughafen':                [{ add: 5 }],
+      'Rossaugasse':              [{ remove: 15 }],
+      'Rum Bahnhof':              [{ add: 5 }],
+      'Kaiserschützenplatz':      [{ add: 10 }],
+      'Baggersee':                [{ remove: 15 }],
+      'Messe Bahnhof':            [{ add: 10 }],
+      'Schutzengelkirche':        [{ remove: 15 }],
+      'Vögelebichl':              [{ remove: 15 }]
+    };
+
+    const hourNow = () => Number(new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit', hour12: false, timeZone: 'Europe/Vienna'
+    }).format(new Date())) % 24;
+
+    function getAction(name, bikes, hour) {
+      if (!Number.isFinite(bikes) || !rules[name]) return null;
+      for (const r of rules[name]) {
+        if (r.before !== undefined && !(hour < r.before)) continue;
+        if (r.from !== undefined && !(hour >= r.from)) continue;
+        if (r.add !== undefined && bikes < r.add) {
+          return { type: 'add', text: `Add (until ${r.add} or more)` };
+        }
+        if (r.remove !== undefined && bikes > r.remove) {
+          return { type: 'remove', text: `Remove (until ${r.remove} or fewer)` };
+        }
+      }
+      return null;
+    }
+
+    const escapeHtml = value => String(value).replace(/[&<>'"]/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    })[char]);
+
+    let rowsCache = [];
+    let claims = new Map();   // station_id -> owner id
+    let myId = null;
+    let claimsCol = null;
+
+    function render() {
+      list.innerHTML = rowsCache.map(r => {
+        const owner = claims.get(r.id);
+        const mine = owner && owner === myId;
+        const cls = [r.action ? r.action.type : '', owner ? 'claimed' : ''].join(' ').trim();
+        let claimHtml = '';
+        if (claimsCol) {
+          claimHtml = owner
+            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Someone has claimed this'}</span>${mine ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
+            : `<div class="claim"><span class="who">Not claimed</span><button class="cbtn" data-act="claim" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Claim</button></div>`;
+        }
+        return `
+          <li class="${cls}" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}" style="cursor:pointer">
+            <span class="name">${escapeHtml(r.name)}</span>
+            <span class="count">${Number.isFinite(r.bikes) ? r.bikes : '—'}<small>bikes</small></span>
+            ${r.action ? `<span class="action">${r.action.text}</span>` : ''}
+            ${claimHtml}
+          </li>`;
+      }).join('');
+    }
+
+    function ask(text) {
+      const dlg = document.getElementById('dlg');
+      document.getElementById('dlgText').textContent = text;
+      return new Promise(resolve => {
+        const done = v => { dlg.close(); yes.onclick = no.onclick = null; resolve(v); };
+        const yes = document.getElementById('dlgYes'), no = document.getElementById('dlgNo');
+        yes.onclick = () => done(true);
+        no.onclick = () => done(false);
+        dlg.oncancel = () => resolve(false);
+        dlg.showModal();
+      });
+    }
+
+    list.addEventListener('click', async e => {
+      const li = e.target.closest('li[data-id]');
+      if (!li || !claimsCol || !myId) return;
+      const { id, name } = li.dataset;
+      const owner = claims.get(id);
+      if (owner && owner !== myId) return;
+      const act = owner ? 'release' : 'claim';
+      const b = li.querySelector('button') || document.createElement('button');
+            b.disabled = true;
+      try {
+        const r = await api('POST', { id, action: act });
+        if (!r.ok && r.status !== 409) throw new Error('HTTP ' + r.status);
+        await loadClaims();
+      } catch (err) {
+        meta.textContent = 'Could not save (' + err.message + ')';
+      }
+    });
+
+    const clientId = (() => {
+      try {
+        let v = localStorage.getItem('clientId');
+        if (!v) { v = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)); localStorage.setItem('clientId', v); }
+        return v;
+      } catch { return null; }
+    })();
+
+    function api(method, body) {
+      return fetch('api/claims', {
+        method, cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': localStorage.getItem('accessKey') || '' },
+        body: body ? JSON.stringify(body) : undefined
+      });
+    }
+
+    async function loadClaims() {
+      const r = await api('GET');
+      if (r.status === 401) {
+        const k = prompt('Access key:');
+        if (k) { localStorage.setItem('accessKey', k); return loadClaims(); }
+        return;
+      }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();               // { stationId: { mine: bool } }
+      claims = new Map(Object.entries(data).map(([id, v]) => [id, v.mine ? myId : 'other']));
+      render();
+    }
+
+    async function initClaims() {
+      if (!clientId) return;
+      myId = clientId;
+      claimsCol = true;
+      if (location.protocol === 'file:') { meta.textContent = 'Open via the server (http://localhost:8080), not as a file.'; claimsCol = null; return; }
+      try { await loadClaims(); } catch { meta.textContent = 'Claims server not reachable.'; claimsCol = null; render(); return; }
+      setInterval(() => { if (!document.hidden) loadClaims().catch(() => {}); }, 5000);
+    }
+
+    async function updateTable() {
+      try {
+        const cacheKey = `?_=${Date.now()}`;
+        const [infoResponse, statusResponse] = await Promise.all([
+          fetch(infoUrl + cacheKey, { cache: 'no-store' }),
+          fetch(statusUrl + cacheKey, { cache: 'no-store' })
+        ]);
+        if (!infoResponse.ok || !statusResponse.ok) throw new Error('network');
+
+        const [info, status] = await Promise.all([infoResponse.json(), statusResponse.json()]);
+        const statusById = new Map(status.data.stations.map(s => [s.station_id, s.num_bikes_available]));
+        const hour = hourNow();
+
+        rowsCache = info.data.stations
+          .filter(s => !s.is_virtual_station)
+          .map(s => {
+            const bikes = statusById.get(s.station_id);
+            return { id: String(s.station_id), name: s.name, bikes, action: getAction(s.name, bikes, hour) };
+          })
+          .sort((a, b) => (!!b.action - !!a.action) || a.name.localeCompare(b.name, 'de'));
+
+        render();
+
+        const rows = rowsCache;
+        const todo = rows.filter(r => r.action).length;
+        const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Vienna' });
+        meta.textContent = `${todo} station${todo === 1 ? '' : 's'} need action · updated ${time}`;
+      } catch {
+        meta.textContent = 'Failed to load live data.';
+      }
+    }
+
+    const btn = document.getElementById('refresh');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Refreshing…';
+      await updateTable();
+      btn.disabled = false;
+      btn.textContent = 'Refresh';
+    });
+
+    updateTable();
+    initClaims();
+  </script>
+</body>
+</html>
