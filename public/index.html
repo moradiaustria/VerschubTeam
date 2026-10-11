@@ -180,8 +180,8 @@
         if (claimsCol) {
           if (c) {
             const label = saving ? '⏳ Saving…'
-              : c.mine ? `✋ Claimed by you · until ${fmtTime(c.until)}`
-              : `🔒 Claimed by ${escapeHtml(c.name)} · until ${fmtTime(c.until)}`;
+              : c.mine ? `✋ Claimed by you`
+              : `🔒 Claimed by ${escapeHtml(c.name)}`;
             const btn = (c.mine || admin) ? `<button class="cbtn" ${ds}>Release</button>` : '';
             claimHtml = `<div class="claim"><span class="who">${label}</span>${btn}</div>`;
           } else {
