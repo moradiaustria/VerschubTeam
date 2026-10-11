@@ -4,6 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Stadtrad Innsbruck Stations</title>
+  <meta name="theme-color" content="#1a7f37">
+  <link rel="manifest" id="mf">
+  <link rel="icon" type="image/png" id="ic">
+  <link rel="apple-touch-icon" id="ai">
+  <script>
+    (function () {
+      var base = location.pathname.replace(/index\.html$/, '').replace(/\/?$/, '/');
+      document.getElementById('mf').href = base + 'manifest.webmanifest';
+      document.getElementById('ic').href = base + 'icon-192.png';
+      document.getElementById('ai').href = base + 'icon-192.png';
+      if ('serviceWorker' in navigator) navigator.serviceWorker.register(base + 'sw.js', { scope: base }).catch(function () {});
+    })();
+  </script>
   <style>
     :root {
       color-scheme: light dark;
