@@ -149,7 +149,7 @@
     let myId = null;
     const pending = new Map();
     let claimsCol = null;
-    const TTL_MS = 8 * 3600 * 1000;
+    const TTL_MS = 2 * 3600 * 1000;
     const store = {
       get: k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
       set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} }
