@@ -1,5 +1,7 @@
 import { getStore } from "@netlify/blobs";
 
+const TTL_MS = (Number(Netlify.env.get("CLAIM_TTL_HOURS")) || 8) * 3600 * 1000;
+
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
@@ -11,11 +13,26 @@ export default async (req) => {
   }
 };
 
+// Returns the claim object, or null if missing/expired (expired ones are deleted).
+async function readClaim(store, id) {
+  const raw = await store.get(id);
+  if (!raw) return null;
+  let c = null;
+  try { c = JSON.parse(raw); } catch {}
+  if (!c || typeof c !== "object" || !c.client || !c.at || Date.now() - c.at > TTL_MS) {
+    await store.delete(id);
+    return null;
+  }
+  return c;
+}
+
 async function handle(req) {
   const key = Netlify.env.get("ACCESS_KEY") || "";
   if (key && req.headers.get("x-key") !== key) return json({}, 401);
   const client = req.headers.get("x-client") || "";
   if (!client) return json({}, 400);
+  const adminKey = Netlify.env.get("ADMIN_KEY") || "";
+  const isAdmin = !!adminKey && req.headers.get("x-admin") === adminKey;
 
   const store = getStore({ name: "claims", consistency: "strong" });
 
@@ -23,8 +40,8 @@ async function handle(req) {
     const { blobs } = await store.list();
     const out = {};
     await Promise.all(blobs.map(async (b) => {
-      const owner = await store.get(b.key);
-      if (owner) out[b.key] = { mine: owner === client };
+      const c = await readClaim(store, b.key);
+      if (c) out[b.key] = { mine: c.client === client, name: c.name || "Someone", until: c.at + TTL_MS };
     }));
     return json(out);
   }
@@ -36,13 +53,16 @@ async function handle(req) {
     if (!/^[\w-]{1,40}$/.test(id)) return json({}, 400);
 
     if (d.action === "claim") {
-      const cur = await store.get(id);
-      if (cur) return cur === client ? json({}) : json({}, 409);
-      await store.set(id, client);
+      const cur = await readClaim(store, id);
+      if (cur) return cur.client === client ? json({}) : json({}, 409);
+      const name = String(d.name || "").trim().slice(0, 30) || "Someone";
+      await store.set(id, JSON.stringify({ client, name, at: Date.now() }));
       return json({});
     }
     if (d.action === "release") {
-      if ((await store.get(id)) !== client) return json({}, 403);
+      const cur = await readClaim(store, id);
+      if (!cur) return json({});
+      if (cur.client !== client && !isAdmin) return json({}, 403);
       await store.delete(id);
       return json({});
     }
