@@ -1,6 +1,6 @@
 import { getStore } from "@netlify/blobs";
 
-const TTL_MS = (Number(Netlify.env.get("CLAIM_TTL_HOURS")) || 8) * 3600 * 1000;
+const TTL_MS = (Number(Netlify.env.get("CLAIM_TTL_HOURS")) || 2) * 3600 * 1000;
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
