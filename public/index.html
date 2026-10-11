@@ -210,13 +210,22 @@
       return store.get('userName');
     }
 
-    document.getElementById('foot').addEventListener('click', e => {
+    document.getElementById('foot').addEventListener('click', async e => {
       const a = e.target.closest('a[data-foot]');
       if (!a) return;
       e.preventDefault();
       if (a.dataset.foot === 'name') ensureName(true);
       else if (store.get('adminKey')) store.set('adminKey', '');
-      else { const k = (prompt('Admin key:') || '').trim(); if (k) store.set('adminKey', k); }
+      else {
+        const k = (prompt('Admin key:') || '').trim();
+        if (k) {
+          store.set('adminKey', k);
+          try {
+            const r = await api('POST', { action: 'admin' });
+            if (!r.ok) { store.set('adminKey', ''); alert('Wrong admin key.'); }
+          } catch { store.set('adminKey', ''); alert('Could not verify the key.'); }
+        }
+      }
       render();
     });
 
