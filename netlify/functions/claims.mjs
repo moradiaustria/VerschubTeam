@@ -49,6 +49,7 @@ async function handle(req) {
   if (req.method === "POST") {
     let d;
     try { d = await req.json(); } catch { return json({}, 400); }
+    if (d.action === "admin") return isAdmin ? json({}) : json({}, 403);
     const id = String(d.id || "");
     if (!/^[\w-]{1,40}$/.test(id)) return json({}, 400);
 
