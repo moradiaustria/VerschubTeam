@@ -1,30 +1,41 @@
-import webpush from "web-push";
 import { getStore } from "@netlify/blobs";
+import { getVapid } from "../lib/push.mjs";
 
-// VAPID keys are generated once and kept in Blobs, so no manual setup is needed.
-export async function getVapid() {
-  const st = getStore({ name: "config", consistency: "strong" });
-  let k = await st.get("vapid", { type: "json" });
-  if (!k) {
-    k = webpush.generateVAPIDKeys();
-    await st.setJSON("vapid", k);
-  }
-  return k;
-}
+const json = (obj, status = 200) =>
+  new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
-export async function notifyAll(excludeClient, payload) {
-  const k = await getVapid();
-  webpush.setVapidDetails("mailto:info@mostafamoradi.at", k.publicKey, k.privateKey);
-  const subs = getStore({ name: "subs", consistency: "strong" });
-  const { blobs } = await subs.list();
-  await Promise.all(blobs.map(async (b) => {
-    if (b.key === excludeClient) return;
-    const rec = await subs.get(b.key, { type: "json" });
-    if (!rec || !rec.sub) return;
-    try {
-      await webpush.sendNotification(rec.sub, JSON.stringify(payload), { TTL: 3600, urgency: "high" });
-    } catch (e) {
-      if (e && (e.statusCode === 404 || e.statusCode === 410)) await subs.delete(b.key);
+export default async (req) => {
+  try {
+    const key = Netlify.env.get("ACCESS_KEY") || "";
+    if (key && req.headers.get("x-key") !== key) return json({}, 401);
+
+    if (req.method === "GET") {
+      const k = await getVapid();
+      return json({ publicKey: k.publicKey });
     }
-  }));
-}
+
+    const client = req.headers.get("x-client") || "";
+    if (!/^[\w-]{1,80}$/.test(client)) return json({}, 400);
+    if (req.method !== "POST") return json({}, 405);
+
+    let d;
+    try { d = await req.json(); } catch { return json({}, 400); }
+    const subs = getStore({ name: "subs", consistency: "strong" });
+
+    if (d.action === "subscribe") {
+      const sub = d.subscription;
+      if (!sub || typeof sub.endpoint !== "string" || !sub.endpoint.startsWith("https://") || !sub.keys) return json({}, 400);
+      await subs.setJSON(client, { sub, at: Date.now() });
+      return json({});
+    }
+    if (d.action === "unsubscribe") {
+      await subs.delete(client);
+      return json({});
+    }
+    return json({}, 400);
+  } catch (e) {
+    return json({ error: String((e && e.message) || e) }, 500);
+  }
+};
+
+export const config = { path: "/api/push" };
