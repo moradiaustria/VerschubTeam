@@ -144,6 +144,7 @@
     let rowsCache = [];
     let claims = new Map();   // station_id -> owner id
     let myId = null;
+    const pending = new Map();
     let claimsCol = null;
 
     function render() {
@@ -187,14 +188,19 @@
       const owner = claims.get(id);
       if (owner && owner !== myId) return;
       const act = owner ? 'release' : 'claim';
-      const b = li.querySelector('button') || document.createElement('button');
-            b.disabled = true;
+      if (pending.has(id)) return;
+      pending.set(id, act === 'claim' ? myId : null);
+      if (act === 'claim') claims.set(id, myId); else claims.delete(id);
+      render();
       try {
         const r = await api('POST', { id, action: act });
         if (!r.ok && r.status !== 409) throw new Error('HTTP ' + r.status);
-        await loadClaims();
+        pending.delete(id);
+        if (r.status === 409) await loadClaims();
       } catch (err) {
+        pending.delete(id);
         meta.textContent = 'Could not save (' + err.message + ')';
+        await loadClaims().catch(() => {});
       }
     });
 
@@ -224,6 +230,7 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();               // { stationId: { mine: bool } }
       claims = new Map(Object.entries(data).map(([id, v]) => [id, v.mine ? myId : 'other']));
+      for (const [id, v] of pending) { if (v) claims.set(id, v); else claims.delete(id); }
       render();
     }
 
