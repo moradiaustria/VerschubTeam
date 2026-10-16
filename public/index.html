@@ -161,12 +161,12 @@
         a.name.localeCompare(b.name, 'de'));
       list.innerHTML = sorted.map(r => {
         const owner = claims.get(r.id);
-        const mine = owner && owner === myId;
+        const mine = owner && owner.mine;
         const cls = [r.action ? r.action.type : '', owner ? 'claimed' : ''].join(' ').trim();
         let claimHtml = '';
         if (claimsCol) {
           claimHtml = owner
-            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Someone has claimed this'}</span>${mine ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
+            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Claimed by ' + escapeHtml(owner.name || 'someone')} · ${Math.max(1, Math.ceil(owner.left / 60000))} min left</span>${mine ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
             : `<div class="claim"><span class="who">Not claimed</span><button class="cbtn" data-act="claim" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Claim</button></div>`;
         }
         return `
@@ -197,7 +197,8 @@
       if (!li || !claimsCol || !myId) return;
       const { id, name } = li.dataset;
       const owner = claims.get(id);
-      if (owner && owner !== myId) return;
+      if (owner && !owner.mine) return;
+      if (!owner && !getName()) return;
       const act = owner ? 'release' : 'claim';
       const b = li.querySelector('button') || document.createElement('button');
             b.disabled = true;
@@ -218,10 +219,21 @@
       } catch { return null; }
     })();
 
+    function getName() {
+      try {
+        let n = localStorage.getItem('name');
+        if (!n) {
+          n = (prompt('Your name:') || '').trim().slice(0, 30);
+          if (n) localStorage.setItem('name', n);
+        }
+        return n;
+      } catch { return ''; }
+    }
+
     function api(method, body) {
       return fetch('api/claims', {
         method, cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': localStorage.getItem('accessKey') || '' },
+        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Name': encodeURIComponent(localStorage.getItem('name') || ''), 'X-Key': localStorage.getItem('accessKey') || '' },
         body: body ? JSON.stringify(body) : undefined
       });
     }
@@ -234,8 +246,8 @@
         return;
       }
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const data = await r.json();               // { stationId: { mine: bool } }
-      claims = new Map(Object.entries(data).map(([id, v]) => [id, v.mine ? myId : 'other']));
+      const data = await r.json();               // { stationId: { mine, name, left } }
+      claims = new Map(Object.entries(data));
       render();
     }
 
