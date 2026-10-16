@@ -20,7 +20,7 @@ const cleanName = (h) => {
   catch { return ""; }
 };
 
-export default async (req) => {
+const handler = async (req) => {
   const key = Netlify.env.get("ACCESS_KEY") || "";
   if (key && req.headers.get("x-key") !== key) return json({}, 401);
   const client = req.headers.get("x-client") || "";
@@ -34,7 +34,7 @@ export default async (req) => {
     await Promise.all(blobs.map(async (b) => {
       const o = parse(await store.get(b.key));
       if (alive(o)) out[b.key] = { mine: o.c === client, name: o.n || "", left: TTL - (Date.now() - o.t) };
-      else await store.delete(b.key);
+      else await store.delete(b.key).catch(() => {});
     }));
     return json(out);
   }
@@ -50,7 +50,7 @@ export default async (req) => {
 
     if (d.action === "claim") {
       if (alive(cur)) return json({}, 409);
-      if (raw) await store.delete(id); // expired or legacy entry
+      if (raw) await store.delete(id).catch(() => {}); // expired or legacy entry
       const name = cleanName(req.headers.get("x-name")) || "Someone";
       const res = await store.set(id, JSON.stringify({ c: client, n: name, t: Date.now() }), { onlyIfNew: true });
       return res.modified ? json({}) : json({}, 409);
@@ -63,6 +63,15 @@ export default async (req) => {
     return json({}, 400);
   }
   return json({}, 405);
+};
+
+export default async (req) => {
+  try {
+    return await handler(req);
+  } catch (e) {
+    console.error("claims error", e);
+    return json({ error: String((e && e.message) || e) }, 500);
+  }
 };
 
 export const config = { path: "/api/claims" };
