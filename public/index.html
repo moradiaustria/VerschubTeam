@@ -204,7 +204,7 @@
             b.disabled = true;
       try {
         const r = await api('POST', { id, action: act });
-        if (!r.ok && r.status !== 409) throw new Error('HTTP ' + r.status);
+        if (!r.ok && r.status !== 409) { const j = await r.json().catch(() => ({})); throw new Error(j.error || ('HTTP ' + r.status)); }
         await loadClaims();
       } catch (err) {
         meta.textContent = 'Could not save (' + err.message + ')';
