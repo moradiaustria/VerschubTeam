@@ -128,8 +128,8 @@
     }).format(new Date())) % 24;
 
     function getAction(name, bikes, hour) {
-      if (!Number.isFinite(bikes) || !rules[name]) return null;
-      for (const r of rules[name]) {
+      if (!Number.isFinite(bikes)) return null;
+      for (const r of (rules[name] || [])) {
         if (r.before !== undefined && !(hour < r.before)) continue;
         if (r.from !== undefined && !(hour >= r.from)) continue;
         if (r.add !== undefined && bikes < r.add) {
@@ -139,6 +139,8 @@
           return { type: 'remove', text: `Remove (until ${r.remove} or fewer)` };
         }
       }
+      // Any empty station without an active rule: treat as "add"
+      if (bikes === 0) return { type: 'add', text: 'Add (station is empty)' };
       return null;
     }
 
@@ -152,7 +154,12 @@
     let claimsCol = null;
 
     function render() {
-      list.innerHTML = rowsCache.map(r => {
+      // Claimed stations first, then stations needing action, then by name
+      const sorted = [...rowsCache].sort((a, b) =>
+        (claims.has(b.id) - claims.has(a.id)) ||
+        (!!b.action - !!a.action) ||
+        a.name.localeCompare(b.name, 'de'));
+      list.innerHTML = sorted.map(r => {
         const owner = claims.get(r.id);
         const mine = owner && owner === myId;
         const cls = [r.action ? r.action.type : '', owner ? 'claimed' : ''].join(' ').trim();
