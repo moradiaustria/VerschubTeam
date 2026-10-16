@@ -1,23 +1,23 @@
-// Service worker: keeps the app installable and shows push notifications.
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
-self.addEventListener('fetch', () => {});
-
-self.addEventListener('push', e => {
-  let d = {};
-  try { d = e.data ? e.data.json() : {}; } catch {}
-  e.waitUntil(self.registration.showNotification(d.title || 'Stadtrad', {
-    body: d.body || '',
-    tag: d.tag || undefined,
-    icon: self.registration.scope + 'icon-192.png',
-    badge: self.registration.scope + 'icon-192.png'
-  }));
+const CACHE="verschub-v1";
+const SHELL=["./","./manifest.webmanifest","./icon-192.png","./icon-512.png"];
+self.addEventListener("install",e=>{
+  e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)));
+  self.skipWaiting();
 });
-
-self.addEventListener('notificationclick', e => {
-  e.notification.close();
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-    for (const c of list) { if ('focus' in c) return c.focus(); }
-    return self.clients.openWindow(self.registration.scope);
-  }));
+self.addEventListener("activate",e=>{
+  e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));
+  self.clients.claim();
+});
+self.addEventListener("fetch",e=>{
+  const req=e.request;
+  const url=new URL(req.url);
+  // Nur eigene Dateien cachen; API (claims) und externe Daten immer direkt aus dem Netz
+  if(req.method!=="GET" || url.origin!==location.origin || url.pathname.includes("/api/")) return;
+  e.respondWith(
+    fetch(req).then(res=>{
+      const copy=res.clone();
+      caches.open(CACHE).then(c=>c.put(req,copy));
+      return res;
+    }).catch(()=>caches.match(req).then(r=>r||caches.match("./")))
+  );
 });

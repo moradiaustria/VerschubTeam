@@ -1,22 +1,14 @@
 <!doctype html>
 <html lang="en" dir="ltr">
 <head>
+  <script>if(!location.pathname.endsWith("/")&&!location.pathname.endsWith(".html"))location.replace(location.pathname+"/"+location.search+location.hash);</script>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1a7f37">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Stadtrad Innsbruck Stations</title>
-  <meta name="theme-color" content="#1a7f37">
-  <link rel="manifest" id="mf">
-  <link rel="icon" type="image/png" id="ic">
-  <link rel="apple-touch-icon" id="ai">
-  <script>
-    (function () {
-      var base = location.pathname.replace(/index\.html$/, '').replace(/\/?$/, '/');
-      document.getElementById('mf').href = base + 'manifest.webmanifest';
-      document.getElementById('ic').href = base + 'icon-192.png';
-      document.getElementById('ai').href = base + 'icon-192.png';
-      if ('serviceWorker' in navigator) navigator.serviceWorker.register(base + 'sw.js', { scope: base }).catch(function () {});
-    })();
-  </script>
   <style>
     :root {
       color-scheme: light dark;
@@ -68,14 +60,12 @@
     .claim .who { color: var(--muted); }
     li.claimed .who { color: var(--text); font-weight: 600; }
     li.claimed { opacity: .92; }
-    li.saving { opacity: .55; pointer-events: none; }
     .cbtn { font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
     .cbtn:disabled { opacity: .5; cursor: default; }
     dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text); padding: 18px; max-width: 320px; width: calc(100% - 40px); }
     dialog::backdrop { background: rgba(0,0,0,.5); }
     dialog p { margin: 0 0 14px; font-weight: 600; overflow-wrap: anywhere; }
     dialog .row { display: flex; gap: 8px; justify-content: flex-end; }
-    #foot a { color: var(--muted); }
     .msg { text-align: center; color: var(--muted); padding: 24px 0; }
   </style>
 </head>
@@ -87,7 +77,6 @@
       <button id="refresh" type="button">Refresh</button>
     </div>
     <ul id="stations" aria-live="polite"></ul>
-    <p id="foot" style="text-align:center;color:var(--muted);font-size:.8rem;margin-top:16px"></p>
   </main>
 
   <dialog id="dlg">
@@ -158,47 +147,29 @@
     })[char]);
 
     let rowsCache = [];
-    let claims = new Map();   // station_id -> { mine, name, until }
+    let claims = new Map();   // station_id -> owner id
     let myId = null;
-    const pending = new Map();
     let claimsCol = null;
-    const TTL_MS = 2 * 3600 * 1000;
-    const store = {
-      get: k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
-      set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} }
-    };
-    const fmtTime = t => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Vienna' });
 
     function render() {
-      const admin = !!store.get('adminKey');
       list.innerHTML = rowsCache.map(r => {
-        const c = claims.get(r.id);
-        const saving = pending.has(r.id);
-        const cls = [r.action ? r.action.type : '', c ? 'claimed' : '', saving ? 'saving' : ''].join(' ').trim();
-        const ds = `data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}"`;
+        const owner = claims.get(r.id);
+        const mine = owner && owner === myId;
+        const cls = [r.action ? r.action.type : '', owner ? 'claimed' : ''].join(' ').trim();
         let claimHtml = '';
         if (claimsCol) {
-          if (c) {
-            const label = saving ? '⏳ Saving…'
-              : c.mine ? `✋ Claimed by you`
-              : `🔒 Claimed by ${escapeHtml(c.name)}`;
-            const btn = (c.mine || admin) ? `<button class="cbtn" ${ds}>Release</button>` : '';
-            claimHtml = `<div class="claim"><span class="who">${label}</span>${btn}</div>`;
-          } else {
-            claimHtml = `<div class="claim"><span class="who">${saving ? '⏳ Saving…' : 'Not claimed'}</span><button class="cbtn" ${ds}>Claim</button></div>`;
-          }
+          claimHtml = owner
+            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Someone has claimed this'}</span>${mine ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
+            : `<div class="claim"><span class="who">Not claimed</span><button class="cbtn" data-act="claim" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Claim</button></div>`;
         }
         return `
-          <li class="${cls}" ${ds} style="cursor:pointer">
+          <li class="${cls}" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}" style="cursor:pointer">
             <span class="name">${escapeHtml(r.name)}</span>
             <span class="count">${Number.isFinite(r.bikes) ? r.bikes : '—'}<small>bikes</small></span>
             ${r.action ? `<span class="action">${r.action.text}</span>` : ''}
             ${claimHtml}
           </li>`;
       }).join('');
-      document.getElementById('foot').innerHTML = claimsCol
-        ? (pushSupported ? `<a href="#" data-foot="push">🔔 Notifications: ${pushOn ? 'on' : 'off'}</a> · ` : '') + `<a href="#" data-foot="name">Name: ${escapeHtml(store.get('userName') || 'not set')}</a> · <a href="#" data-foot="admin">${admin ? 'Admin: on (tap to turn off)' : 'Admin'}</a>`
-        : '';
     }
 
     function ask(text) {
@@ -214,59 +185,21 @@
       });
     }
 
-    function ensureName(force) {
-      let n = store.get('userName');
-      if (!n || force) {
-        n = (prompt('Your name (shown to others):', n) || '').trim().slice(0, 30);
-        if (n) store.set('userName', n);
-      }
-      return store.get('userName');
-    }
-
-    document.getElementById('foot').addEventListener('click', async e => {
-      const a = e.target.closest('a[data-foot]');
-      if (!a) return;
-      e.preventDefault();
-      if (a.dataset.foot === 'push') { await togglePush(); return; }
-      if (a.dataset.foot === 'name') ensureName(true);
-      else if (store.get('adminKey')) store.set('adminKey', '');
-      else {
-        const k = (prompt('Admin key:') || '').trim();
-        if (k) {
-          store.set('adminKey', k);
-          try {
-            const r = await api('POST', { action: 'admin' });
-            if (!r.ok) { store.set('adminKey', ''); alert('Wrong admin key.'); }
-          } catch { store.set('adminKey', ''); alert('Could not verify the key.'); }
-        }
-      }
-      render();
-    });
-
     list.addEventListener('click', async e => {
-      const el = e.target.closest('[data-id]');
-      if (!el || !claimsCol || !myId) return;
-      const { id, name } = el.dataset;
-      const c = claims.get(id);
-      const admin = !!store.get('adminKey');
-      if (c && !c.mine && !admin) return;
-      if (pending.has(id)) return;
-      const act = c ? 'release' : 'claim';
-      let userName = '';
-      if (act === 'claim') { userName = ensureName(false); if (!userName) return; }
-      if (c && !c.mine && !(await ask(`Release "${name}" (claimed by ${c.name})?`))) return;
-      pending.set(id, act === 'claim' ? { mine: true, name: userName, until: Date.now() + TTL_MS } : null);
-      if (act === 'claim') claims.set(id, pending.get(id)); else claims.delete(id);
-      render();
+      const li = e.target.closest('li[data-id]');
+      if (!li || !claimsCol || !myId) return;
+      const { id, name } = li.dataset;
+      const owner = claims.get(id);
+      if (owner && owner !== myId) return;
+      const act = owner ? 'release' : 'claim';
+      const b = li.querySelector('button') || document.createElement('button');
+            b.disabled = true;
       try {
-        const r = await api('POST', { id, action: act, name: userName, stationName: name });
-        if (!r.ok && r.status !== 409) { let t = ''; try { t = (await r.json()).error || ''; } catch {} throw new Error('HTTP ' + r.status + ' ' + t); }
-        pending.delete(id);
-        if (r.status === 409) await loadClaims();
+        const r = await api('POST', { id, action: act });
+        if (!r.ok && r.status !== 409) throw new Error('HTTP ' + r.status);
+        await loadClaims();
       } catch (err) {
-        pending.delete(id);
         meta.textContent = 'Could not save (' + err.message + ')';
-        await loadClaims().catch(() => {});
       }
     });
 
@@ -278,88 +211,24 @@
       } catch { return null; }
     })();
 
-    const apiUrl = location.pathname.replace(/index\.html$/, '').replace(/\/?$/, '/') + 'api/claims';
-
     function api(method, body) {
-      return fetch(apiUrl, {
+      return fetch('api/claims', {
         method, cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': store.get('accessKey'), 'X-Admin': store.get('adminKey') },
+        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': localStorage.getItem('accessKey') || '' },
         body: body ? JSON.stringify(body) : undefined
       });
-    }
-
-
-    // ---- Push notifications ----
-    let pushOn = false;
-    const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-    const pushUrl = apiUrl.replace(/claims$/, 'push');
-    const swBase = apiUrl.replace(/api\/claims$/, '');
-
-    function pushApi(method, body) {
-      return fetch(pushUrl, {
-        method, cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': store.get('accessKey') },
-        body: body ? JSON.stringify(body) : undefined
-      });
-    }
-    const b64ToBytes = s => {
-      const raw = atob((s + '='.repeat((4 - s.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
-      return Uint8Array.from(raw, c => c.charCodeAt(0));
-    };
-    async function getReg() {
-      const reg = await navigator.serviceWorker.register(swBase + 'sw.js', { scope: swBase });
-      if (!reg.active) {
-        const sw = reg.installing || reg.waiting;
-        if (sw) await new Promise(res => sw.addEventListener('statechange', () => { if (sw.state === 'activated') res(); }));
-      }
-      return reg;
-    }
-    async function refreshPush() {
-      if (!pushSupported) return;
-      try {
-        const reg = await navigator.serviceWorker.getRegistration(swBase);
-        const sub = reg && await reg.pushManager.getSubscription();
-        pushOn = !!sub && Notification.permission === 'granted';
-      } catch { pushOn = false; }
-      render();
-    }
-    async function togglePush() {
-      try {
-        if (pushOn) {
-          const reg = await getReg();
-          const cur = await reg.pushManager.getSubscription();
-          await pushApi('POST', { action: 'unsubscribe' });
-          if (cur) await cur.unsubscribe();
-          pushOn = false;
-        } else {
-          if (Notification.permission === 'denied') { alert('Notifications are blocked. Enable them in the browser/site settings.'); return; }
-          const perm = await Notification.requestPermission();
-          if (perm !== 'granted') return;
-          const reg = await getReg();
-          const gr = await pushApi('GET');
-          let k = null;
-          try { k = await gr.json(); } catch {}
-          if (!k) throw new Error('push API HTTP ' + gr.status + ' (not JSON - function missing?)');
-          if (!gr.ok || !k.publicKey) throw new Error('push API HTTP ' + gr.status + ' ' + (k.error || ''));
-          const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(k.publicKey) });
-          const r = await pushApi('POST', { action: 'subscribe', subscription: sub.toJSON() });
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          pushOn = true;
-        }
-      } catch (e) { alert('Notifications failed: ' + e.message); }
-      render();
     }
 
     async function loadClaims() {
       const r = await api('GET');
       if (r.status === 401) {
         const k = prompt('Access key:');
-        if (k) { store.set('accessKey', k); return loadClaims(); }
+        if (k) { localStorage.setItem('accessKey', k); return loadClaims(); }
         return;
       }
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      claims = new Map(Object.entries(await r.json()));
-      for (const [id, v] of pending) { if (v) claims.set(id, v); else claims.delete(id); }
+      const data = await r.json();               // { stationId: { mine: bool } }
+      claims = new Map(Object.entries(data).map(([id, v]) => [id, v.mine ? myId : 'other']));
       render();
     }
 
@@ -367,7 +236,7 @@
       if (!clientId) return;
       myId = clientId;
       claimsCol = true;
-      if (location.protocol === 'file:') { meta.textContent = 'Open via the server, not as a file.'; claimsCol = null; return; }
+      if (location.protocol === 'file:') { meta.textContent = 'Open via the server (http://localhost:8080), not as a file.'; claimsCol = null; return; }
       try { await loadClaims(); } catch { meta.textContent = 'Claims server not reachable.'; claimsCol = null; render(); return; }
       setInterval(() => { if (!document.hidden) loadClaims().catch(() => {}); }, 5000);
     }
@@ -415,7 +284,7 @@
 
     updateTable();
     initClaims();
-    refreshPush();
   </script>
+  <script>if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));</script>
 </body>
 </html>
