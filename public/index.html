@@ -67,12 +67,9 @@
     dialog p { margin: 0 0 14px; font-weight: 600; overflow-wrap: anywhere; }
     dialog .row { display: flex; gap: 8px; justify-content: flex-end; }
     li.zero { background: var(--add-bg); }
-    .settings { margin-top: 20px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 12px; }
-    .settings h2 { font-size: 1rem; margin: 0; }
-    .srow { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-    .srow label { font-weight: 600; font-size: .9rem; }
-    .srow input[type=text] { font: inherit; font-size: .9rem; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); min-width: 0; flex: 1 1 140px; max-width: 220px; }
-    .shint { color: var(--muted); font-size: .8rem; }
+    .settings { margin-top: 18px; text-align: center; color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+    .settings a { color: var(--text); font-weight: 600; text-decoration: underline; cursor: pointer; }
+    .settings .sep { margin: 0 6px; }
     .msg { text-align: center; color: var(--muted); padding: 24px 0; }
   </style>
 </head>
@@ -84,18 +81,7 @@
       <button id="refresh" type="button">Refresh</button>
     </div>
     <ul id="stations" aria-live="polite"></ul>
-    <section class="settings">
-      <h2>Settings</h2>
-      <div class="srow">
-        <label for="userName">Name</label>
-        <input id="userName" type="text" maxlength="30" placeholder="Your name" autocomplete="nickname">
-      </div>
-      <div class="srow">
-        <label for="notifBtn">Notifications</label>
-        <button class="cbtn" id="notifBtn" type="button">Enable</button>
-      </div>
-      <div class="shint" id="notifHint"></div>
-    </section>
+    <div class="settings" id="settings"></div>
   </main>
 
   <dialog id="dlg">
@@ -192,7 +178,7 @@
         let claimHtml = '';
         if (claimsCol) {
           claimHtml = owner
-            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Claimed by ' + escapeHtml(c.name || 'Someone')}</span>${mine ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
+            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Claimed by ' + escapeHtml(c.name || 'Someone')}</span>${(mine || isAdmin()) ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
             : `<div class="claim"><span class="who">Not claimed</span><button class="cbtn" data-act="claim" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Claim</button></div>`;
         }
         return `
@@ -223,7 +209,7 @@
       if (!li || !claimsCol || !myId) return;
       const { id, name } = li.dataset;
       const c = claims.get(id);
-      if (c && !c.mine) return;
+      if (c && !c.mine && !isAdmin()) return;
       const act = c ? 'release' : 'claim';
       const b = li.querySelector('button') || document.createElement('button');
             b.disabled = true;
@@ -247,7 +233,7 @@
     function api(method, body) {
       return fetch('api/claims', {
         method, cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': localStorage.getItem('accessKey') || '' },
+        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': localStorage.getItem('accessKey') || '', 'X-Admin': localStorage.getItem('adminKey') || '' },
         body: body ? JSON.stringify(body) : undefined
       });
     }
@@ -314,39 +300,48 @@
       btn.textContent = 'Refresh';
     });
 
-    // ---- Settings: name + notifications ----
-    const nameInput = document.getElementById('userName');
-    const notifBtn = document.getElementById('notifBtn');
-    const notifHint = document.getElementById('notifHint');
-    const getName = () => { try { return (localStorage.getItem('userName') || '').trim(); } catch { return ''; } };
-    nameInput.value = getName();
-    nameInput.addEventListener('change', () => {
-      try { localStorage.setItem('userName', nameInput.value.trim().slice(0, 30)); } catch {}
-    });
+    // ---- Settings line: name / notifications / admin ----
+    const settingsEl = document.getElementById('settings');
+    const store = {
+      get: k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
+      set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} }
+    };
+    const getName = () => store.get('userName').trim();
+    const isAdmin = () => !!store.get('adminKey');
 
     const pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
     const b64 = s => { const p = '='.repeat((4 - s.length % 4) % 4); const r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(r, c => c.charCodeAt(0)); };
     const pushApi = (method, body) => fetch('api/push', {
       method, cache: 'no-store',
-      headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': localStorage.getItem('accessKey') || '' },
+      headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': store.get('accessKey') },
       body: body ? JSON.stringify(body) : undefined
     });
 
-    async function refreshNotifUi() {
-      if (!pushOk) {
-        notifBtn.disabled = true; notifBtn.textContent = 'Not supported';
-        notifHint.textContent = 'On iPhone: add this page to the Home Screen first, then open it from there.';
-        return;
+    let notifState = 'not allowed';
+    async function refreshNotif() {
+      if (!pushOk) notifState = 'unsupported';
+      else if (Notification.permission === 'denied') notifState = 'blocked';
+      else {
+        let sub = null;
+        try { sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription(); } catch {}
+        notifState = (sub && Notification.permission === 'granted') ? 'on' : 'not allowed';
       }
-      let sub = null;
-      try { sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription(); } catch {}
-      const on = !!sub && Notification.permission === 'granted';
-      notifBtn.textContent = on ? 'Turn off' : 'Enable';
-      notifHint.textContent = Notification.permission === 'denied' ? 'Notifications are blocked in your browser settings.' : (on ? 'You get a notification when someone claims a station.' : '');
+      renderSettings();
     }
 
-    notifBtn.addEventListener('click', async () => {
-      notifBtn.disabled = true;
+    function renderSettings() {
+      const name = getName();
+      settingsEl.innerHTML =
+        `Name: <a data-s="name">${escapeHtml(name || 'unknown')}</a>` +
+        `<span class="sep">·</span>Notifications: <a data-s="notif">${notifState}</a>` +
+        `<span class="sep">·</span>Admin: <a data-s="admin">${isAdmin() ? 'on' : 'off'}</a>` +
+        (isAdmin() ? `<span class="sep">·</span><a data-s="relall">release all</a>` : '');
+      render();
+    }
+
+    async function toggleNotif() {
+      if (notifState === 'unsupported') { alert('On iPhone: add this page to the Home Screen and open it from there.'); return; }
+      if (notifState === 'blocked') { alert('Notifications are blocked in the browser settings.'); return; }
       try {
         const reg = await navigator.serviceWorker.ready;
         const sub = await reg.pushManager.getSubscription();
@@ -363,18 +358,45 @@
           const r = await pushApi('POST', { action: 'subscribe', subscription: ns.toJSON() });
           if (!r.ok) throw new Error('HTTP ' + r.status);
         }
-      } catch (err) {
-        notifHint.textContent = 'Could not change notifications (' + err.message + ')';
-        notifBtn.disabled = false;
-        return;
+      } catch (err) { meta.textContent = 'Notifications: ' + err.message; }
+      refreshNotif();
+    }
+
+    async function toggleAdmin() {
+      if (isAdmin()) { store.set('adminKey', ''); renderSettings(); return; }
+      const pw = prompt('Admin password:');
+      if (!pw) return;
+      store.set('adminKey', pw);
+      try {
+        const r = await api('POST', { action: 'admin' });
+        if (!r.ok) throw new Error('wrong password');
+      } catch (err) { store.set('adminKey', ''); meta.textContent = 'Admin: ' + err.message; }
+      renderSettings();
+    }
+
+    settingsEl.addEventListener('click', async e => {
+      const a = e.target.closest('a[data-s]');
+      if (!a) return;
+      const k = a.dataset.s;
+      if (k === 'name') {
+        const v = prompt('Your name:', getName());
+        if (v !== null) { store.set('userName', v.trim().slice(0, 30)); renderSettings(); }
+      } else if (k === 'notif') toggleNotif();
+      else if (k === 'admin') toggleAdmin();
+      else if (k === 'relall') {
+        if (!confirm('Release ALL claims?')) return;
+        try {
+          const r = await api('POST', { action: 'releaseAll' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await loadClaims();
+        } catch (err) { meta.textContent = 'Could not release (' + err.message + ')'; }
       }
-      notifBtn.disabled = false;
-      refreshNotifUi();
     });
 
     updateTable();
     initClaims();
-    refreshNotifUi();
+    renderSettings();
+    refreshNotif();
   </script>
   <script>if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));</script>
 </body>
