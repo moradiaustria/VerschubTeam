@@ -152,7 +152,7 @@
           return { type: 'remove', text: `Remove (until ${r.remove} or fewer)` };
         }
       }
-      if (bikes === 0) return { type: 'add', text: 'Empty – add bikes' };
+      if (bikes === 0) return { type: 'add', text: 'Empty – add bikes', empty: true };
       return null;
     }
 
@@ -166,10 +166,11 @@
     let claimsCol = null;
     const pending = new Set();
 
+    // 0 = rule-based action, 1 = empty only (no rule), 2 = others
+    const rank = r => (r.action && !r.action.empty) ? 0 : (r.action ? 1 : 2);
     const sortRows = () => rowsCache.sort((a, b) =>
       (claims.has(b.id) - claims.has(a.id)) ||
-      ((b.bikes === 0) - (a.bikes === 0)) ||
-      (!!b.action - !!a.action) ||
+      (rank(a) - rank(b)) ||
       a.name.localeCompare(b.name, 'de'));
 
     function render() {
