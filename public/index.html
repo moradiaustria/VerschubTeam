@@ -28,7 +28,7 @@
       padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
                max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
     }
-    main { max-width: 640px; margin: 0 auto; }
+    main { max-width: 760px; margin: 0 auto; }
     h1 { font-size: 1.3rem; margin: 4px 0 2px; }
     .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
     #meta { color: var(--muted); font-size: .85rem; }
@@ -39,7 +39,7 @@
     }
     #refresh:active { transform: scale(.97); }
     #refresh:disabled { opacity: .6; cursor: default; }
-    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     li {
       display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center;
       background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
@@ -59,6 +59,16 @@
     .claim { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: .88rem; }
     .claim .who { color: var(--muted); }
     li.claimed .who { color: var(--text); font-weight: 600; }
+    li.zero { background: var(--add-bg); }
+    @media (max-width: 520px) {
+      ul { gap: 6px; }
+      li { padding: 9px 9px; border-left-width: 5px; }
+      .name { font-size: .88rem; }
+      .count { font-size: 1.3rem; }
+      .action { font-size: .78rem; padding: 4px 6px; margin-top: 4px; }
+      .claim { font-size: .74rem; margin-top: 4px; gap: 4px; }
+      .cbtn { font-size: .74rem; padding: 4px 9px; }
+    }
     li.claimed { opacity: .92; }
     .cbtn { font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
     .cbtn:disabled { opacity: .5; cursor: default; }
