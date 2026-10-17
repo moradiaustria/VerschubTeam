@@ -1,7 +1,7 @@
 import { getStore } from "@netlify/blobs";
 import { notifyAll } from "../lib/push.mjs";
 
-const TTL_MS = (Number(Netlify.env.get("CLAIM_TTL_HOURS")) || 2) * 3600 * 1000;
+const TTL_MS = 60 * 60 * 1000; // claims auto-release after 1 hour
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
@@ -51,6 +51,12 @@ async function handle(req, context) {
     let d;
     try { d = await req.json(); } catch { return json({}, 400); }
     if (d.action === "admin") return isAdmin ? json({}) : json({}, 403);
+    if (d.action === "releaseAll") {
+      if (!isAdmin) return json({}, 403);
+      const { blobs } = await store.list();
+      await Promise.all(blobs.map(b => store.delete(b.key)));
+      return json({});
+    }
     const id = String(d.id || "");
     if (!/^[\w-]{1,40}$/.test(id)) return json({}, 400);
 
