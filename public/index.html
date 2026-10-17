@@ -28,7 +28,7 @@
       padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
                max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
     }
-    main { max-width: 760px; margin: 0 auto; }
+    main { max-width: 640px; margin: 0 auto; }
     h1 { font-size: 1.3rem; margin: 4px 0 2px; }
     .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
     #meta { color: var(--muted); font-size: .85rem; }
@@ -39,7 +39,7 @@
     }
     #refresh:active { transform: scale(.97); }
     #refresh:disabled { opacity: .6; cursor: default; }
-    ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
     li {
       display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center;
       background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
@@ -59,24 +59,15 @@
     .claim { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: .88rem; }
     .claim .who { color: var(--muted); }
     li.claimed .who { color: var(--text); font-weight: 600; }
-    li.zero { background: var(--add-bg); }
-    @media (max-width: 520px) {
-      ul { gap: 6px; }
-      li { padding: 9px 9px; border-left-width: 5px; }
-      .name { font-size: .88rem; }
-      .count { font-size: 1.3rem; }
-      .action { font-size: .78rem; padding: 4px 6px; margin-top: 4px; }
-      .claim { font-size: .74rem; margin-top: 4px; gap: 4px; }
-      .cbtn { font-size: .74rem; padding: 4px 9px; }
-    }
     li.claimed { opacity: .92; }
+    li.zero { opacity: .5; }
+    li.zero.claimed { opacity: .92; }
     .cbtn { font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
     .cbtn:disabled { opacity: .5; cursor: default; }
     dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text); padding: 18px; max-width: 320px; width: calc(100% - 40px); }
     dialog::backdrop { background: rgba(0,0,0,.5); }
     dialog p { margin: 0 0 14px; font-weight: 600; overflow-wrap: anywhere; }
     dialog .row { display: flex; gap: 8px; justify-content: flex-end; }
-    li.zero { background: var(--add-bg); }
     .settings { margin-top: 18px; text-align: center; color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
     .settings a { color: var(--text); font-weight: 600; text-decoration: underline; cursor: pointer; }
     .settings .sep { margin: 0 6px; }
@@ -136,13 +127,15 @@
       'Messe Bahnhof':            [{ add: 10 }],
       'Schutzengelkirche':        [{ remove: 15 }],
       'Vögelebichl':              [{ remove: 15 }],
-      'Hotel Trend Austria':      [{ add: 10 }]
+      'Hotel Trend Austria':      [{ add: 10 }],
+      'Austria Trend Hotel':      [{ add: 10 }]
     };
 
     const hourNow = () => Number(new Intl.DateTimeFormat('en-GB', {
       hour: '2-digit', hour12: false, timeZone: 'Europe/Vienna'
     }).format(new Date())) % 24;
 
+    const displayName = n => /alois\s*lugger/i.test(n) ? `DDorf (${n})` : n;
     const norm = v => String(v).toLowerCase().replace(/\s+/g, ' ').trim();
     const rulesNorm = new Map(Object.entries(rules).map(([k, v]) => [norm(k), v]));
 
@@ -171,6 +164,7 @@
     let claims = new Map();   // station_id -> owner id
     let myId = null;
     let claimsCol = null;
+    const pending = new Set();
 
     const sortRows = () => rowsCache.sort((a, b) =>
       (claims.has(b.id) - claims.has(a.id)) ||
@@ -188,8 +182,8 @@
         let claimHtml = '';
         if (claimsCol) {
           claimHtml = owner
-            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Claimed by ' + escapeHtml(c.name || 'Someone')}</span>${(mine || isAdmin()) ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
-            : `<div class="claim"><span class="who">Not claimed</span><button class="cbtn" data-act="claim" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Claim</button></div>`;
+            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Claimed by ' + escapeHtml(c.name || 'Someone')}</span>${(mine || isAdmin()) ? `<button class="cbtn" data-act="release" ${pending.has(r.id) ? 'disabled' : ''} data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">${pending.has(r.id) ? '⏳' : 'Release'}</button>` : ''}</div>`
+            : `<div class="claim"><span class="who">Not claimed</span><button class="cbtn" data-act="claim" ${pending.has(r.id) ? 'disabled' : ''} data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">${pending.has(r.id) ? '⏳' : 'Claim'}</button></div>`;
         }
         return `
           <li class="${cls}" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}" style="cursor:pointer">
@@ -221,14 +215,18 @@
       const c = claims.get(id);
       if (c && !c.mine && !isAdmin()) return;
       const act = c ? 'release' : 'claim';
-      const b = li.querySelector('button') || document.createElement('button');
-            b.disabled = true;
+      if (pending.has(id)) return;
+      pending.add(id);
+      render();
       try {
         const r = await api('POST', { id, action: act, name: getName(), stationName: name });
         if (!r.ok && r.status !== 409) throw new Error('HTTP ' + r.status);
         await loadClaims();
       } catch (err) {
         meta.textContent = 'Could not save (' + err.message + ')';
+      } finally {
+        pending.delete(id);
+        render();
       }
     });
 
@@ -287,7 +285,7 @@
           .filter(s => !s.is_virtual_station)
           .map(s => {
             const bikes = statusById.get(s.station_id);
-            return { id: String(s.station_id), name: s.name, bikes, action: getAction(s.name, bikes, hour) };
+            return { id: String(s.station_id), name: displayName(s.name), bikes, action: getAction(s.name, bikes, hour) };
           });
 
         render();
