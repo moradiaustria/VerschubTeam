@@ -66,6 +66,13 @@
     dialog::backdrop { background: rgba(0,0,0,.5); }
     dialog p { margin: 0 0 14px; font-weight: 600; overflow-wrap: anywhere; }
     dialog .row { display: flex; gap: 8px; justify-content: flex-end; }
+    li.zero { background: var(--add-bg); }
+    .settings { margin-top: 20px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 12px; }
+    .settings h2 { font-size: 1rem; margin: 0; }
+    .srow { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .srow label { font-weight: 600; font-size: .9rem; }
+    .srow input[type=text] { font: inherit; font-size: .9rem; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); min-width: 0; flex: 1 1 140px; max-width: 220px; }
+    .shint { color: var(--muted); font-size: .8rem; }
     .msg { text-align: center; color: var(--muted); padding: 24px 0; }
   </style>
 </head>
@@ -77,6 +84,18 @@
       <button id="refresh" type="button">Refresh</button>
     </div>
     <ul id="stations" aria-live="polite"></ul>
+    <section class="settings">
+      <h2>Settings</h2>
+      <div class="srow">
+        <label for="userName">Name</label>
+        <input id="userName" type="text" maxlength="30" placeholder="Your name" autocomplete="nickname">
+      </div>
+      <div class="srow">
+        <label for="notifBtn">Notifications</label>
+        <button class="cbtn" id="notifBtn" type="button">Enable</button>
+      </div>
+      <div class="shint" id="notifHint"></div>
+    </section>
   </main>
 
   <dialog id="dlg">
@@ -120,16 +139,21 @@
       'Baggersee':                [{ remove: 15 }],
       'Messe Bahnhof':            [{ add: 10 }],
       'Schutzengelkirche':        [{ remove: 15 }],
-      'Vögelebichl':              [{ remove: 15 }]
+      'Vögelebichl':              [{ remove: 15 }],
+      'Hotel Trend Austria':      [{ add: 10 }]
     };
 
     const hourNow = () => Number(new Intl.DateTimeFormat('en-GB', {
       hour: '2-digit', hour12: false, timeZone: 'Europe/Vienna'
     }).format(new Date())) % 24;
 
+    const norm = v => String(v).toLowerCase().replace(/\s+/g, ' ').trim();
+    const rulesNorm = new Map(Object.entries(rules).map(([k, v]) => [norm(k), v]));
+
     function getAction(name, bikes, hour) {
-      if (!Number.isFinite(bikes) || !rules[name]) return null;
-      for (const r of rules[name]) {
+      if (!Number.isFinite(bikes)) return null;
+      const list = rulesNorm.get(norm(name));
+      if (list) for (const r of list) {
         if (r.before !== undefined && !(hour < r.before)) continue;
         if (r.from !== undefined && !(hour >= r.from)) continue;
         if (r.add !== undefined && bikes < r.add) {
@@ -139,6 +163,7 @@
           return { type: 'remove', text: `Remove (until ${r.remove} or fewer)` };
         }
       }
+      if (bikes === 0) return { type: 'add', text: 'Empty – add bikes' };
       return null;
     }
 
@@ -151,15 +176,23 @@
     let myId = null;
     let claimsCol = null;
 
+    const sortRows = () => rowsCache.sort((a, b) =>
+      (claims.has(b.id) - claims.has(a.id)) ||
+      ((b.bikes === 0) - (a.bikes === 0)) ||
+      (!!b.action - !!a.action) ||
+      a.name.localeCompare(b.name, 'de'));
+
     function render() {
+      sortRows();
       list.innerHTML = rowsCache.map(r => {
-        const owner = claims.get(r.id);
-        const mine = owner && owner === myId;
-        const cls = [r.action ? r.action.type : '', owner ? 'claimed' : ''].join(' ').trim();
+        const c = claims.get(r.id);
+        const owner = !!c;
+        const mine = owner && c.mine;
+        const cls = [r.action ? r.action.type : '', r.bikes === 0 ? 'zero' : '', owner ? 'claimed' : ''].filter(Boolean).join(' ');
         let claimHtml = '';
         if (claimsCol) {
           claimHtml = owner
-            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Someone has claimed this'}</span>${mine ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
+            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Claimed by ' + escapeHtml(c.name || 'Someone')}</span>${mine ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
             : `<div class="claim"><span class="who">Not claimed</span><button class="cbtn" data-act="claim" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Claim</button></div>`;
         }
         return `
@@ -189,13 +222,13 @@
       const li = e.target.closest('li[data-id]');
       if (!li || !claimsCol || !myId) return;
       const { id, name } = li.dataset;
-      const owner = claims.get(id);
-      if (owner && owner !== myId) return;
-      const act = owner ? 'release' : 'claim';
+      const c = claims.get(id);
+      if (c && !c.mine) return;
+      const act = c ? 'release' : 'claim';
       const b = li.querySelector('button') || document.createElement('button');
             b.disabled = true;
       try {
-        const r = await api('POST', { id, action: act });
+        const r = await api('POST', { id, action: act, name: getName(), stationName: name });
         if (!r.ok && r.status !== 409) throw new Error('HTTP ' + r.status);
         await loadClaims();
       } catch (err) {
@@ -228,7 +261,7 @@
       }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();               // { stationId: { mine: bool } }
-      claims = new Map(Object.entries(data).map(([id, v]) => [id, v.mine ? myId : 'other']));
+      claims = new Map(Object.entries(data).map(([id, v]) => [id, { mine: !!v.mine, name: v.name }]));
       render();
     }
 
@@ -259,8 +292,7 @@
           .map(s => {
             const bikes = statusById.get(s.station_id);
             return { id: String(s.station_id), name: s.name, bikes, action: getAction(s.name, bikes, hour) };
-          })
-          .sort((a, b) => (!!b.action - !!a.action) || a.name.localeCompare(b.name, 'de'));
+          });
 
         render();
 
@@ -282,8 +314,67 @@
       btn.textContent = 'Refresh';
     });
 
+    // ---- Settings: name + notifications ----
+    const nameInput = document.getElementById('userName');
+    const notifBtn = document.getElementById('notifBtn');
+    const notifHint = document.getElementById('notifHint');
+    const getName = () => { try { return (localStorage.getItem('userName') || '').trim(); } catch { return ''; } };
+    nameInput.value = getName();
+    nameInput.addEventListener('change', () => {
+      try { localStorage.setItem('userName', nameInput.value.trim().slice(0, 30)); } catch {}
+    });
+
+    const pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    const b64 = s => { const p = '='.repeat((4 - s.length % 4) % 4); const r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(r, c => c.charCodeAt(0)); };
+    const pushApi = (method, body) => fetch('api/push', {
+      method, cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': localStorage.getItem('accessKey') || '' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    async function refreshNotifUi() {
+      if (!pushOk) {
+        notifBtn.disabled = true; notifBtn.textContent = 'Not supported';
+        notifHint.textContent = 'On iPhone: add this page to the Home Screen first, then open it from there.';
+        return;
+      }
+      let sub = null;
+      try { sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription(); } catch {}
+      const on = !!sub && Notification.permission === 'granted';
+      notifBtn.textContent = on ? 'Turn off' : 'Enable';
+      notifHint.textContent = Notification.permission === 'denied' ? 'Notifications are blocked in your browser settings.' : (on ? 'You get a notification when someone claims a station.' : '');
+    }
+
+    notifBtn.addEventListener('click', async () => {
+      notifBtn.disabled = true;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub && Notification.permission === 'granted') {
+          await pushApi('POST', { action: 'unsubscribe' });
+          await sub.unsubscribe();
+        } else {
+          const perm = await Notification.requestPermission();
+          if (perm !== 'granted') throw new Error('permission denied');
+          const kr = await pushApi('GET');
+          if (!kr.ok) throw new Error('HTTP ' + kr.status);
+          const { publicKey } = await kr.json();
+          const ns = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(publicKey) });
+          const r = await pushApi('POST', { action: 'subscribe', subscription: ns.toJSON() });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+        }
+      } catch (err) {
+        notifHint.textContent = 'Could not change notifications (' + err.message + ')';
+        notifBtn.disabled = false;
+        return;
+      }
+      notifBtn.disabled = false;
+      refreshNotifUi();
+    });
+
     updateTable();
     initClaims();
+    refreshNotifUi();
   </script>
   <script>if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));</script>
 </body>
