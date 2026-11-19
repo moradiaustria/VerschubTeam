@@ -7,6 +7,9 @@
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
   <meta charset="utf-8">
+<!-- This site is hosted on Netlify. Anyone can build and deploy a site
+     like this one for free: https://netlify.new/?utm_campaign=loops&utm_source=ai-legible&utm_medium=owned&utm_content=comment&utm_id=3eb5b472-b908-4d2b-953f-bd27a5c4e968
+     Netlify hosting facts for this site: static/SSR served via Netlify Edge. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Stadtrad Innsbruck Stations</title>
   <style>
@@ -60,12 +63,21 @@
     .claim .who { color: var(--muted); }
     li.claimed .who { color: var(--text); font-weight: 600; }
     li.claimed { opacity: .92; }
+    li.zero { opacity: .5; }
+    li.zero.claimed { opacity: .92; }
     .cbtn { font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
     .cbtn:disabled { opacity: .5; cursor: default; }
     dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text); padding: 18px; max-width: 320px; width: calc(100% - 40px); }
     dialog::backdrop { background: rgba(0,0,0,.5); }
     dialog p { margin: 0 0 14px; font-weight: 600; overflow-wrap: anywhere; }
     dialog .row { display: flex; gap: 8px; justify-content: flex-end; }
+    .settings { margin-top: 18px; text-align: center; color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+    .settings a { color: var(--text); font-weight: 600; text-decoration: underline; cursor: pointer; }
+    .settings { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+    .settings .ico { position: relative; display: inline-block; margin-left: 4px; padding: 2px 6px; font: inherit; font-size: 1.35rem; line-height: 1; background: none; border: 0; cursor: pointer; vertical-align: middle; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+    .settings .ico.off { opacity: .55; }
+    .settings .ico.off::after { content: ""; position: absolute; left: 2px; right: 2px; top: 50%; border-top: 2px solid var(--remove); transform: rotate(-45deg); pointer-events: none; }
+    .settings .sep { margin: 0 6px; }
     .msg { text-align: center; color: var(--muted); padding: 24px 0; }
   </style>
 </head>
@@ -77,6 +89,7 @@
       <button id="refresh" type="button">Refresh</button>
     </div>
     <ul id="stations" aria-live="polite"></ul>
+    <div class="settings" id="settings"></div>
   </main>
 
   <dialog id="dlg">
@@ -121,6 +134,7 @@
       'Messe Bahnhof':            [{ add: 10 }],
       'Schutzengelkirche':        [{ remove: 15 }],
       'Vögelebichl':              [{ remove: 15 }],
+      'Hotel Trend Austria':      [{ add: 10 }],
       'Austria Trend Hotel':      [{ add: 10 }]
     };
 
@@ -128,9 +142,14 @@
       hour: '2-digit', hour12: false, timeZone: 'Europe/Vienna'
     }).format(new Date())) % 24;
 
+    const displayName = n => /alois\s*lugger/i.test(n) ? `DDorf (${n})` : n;
+    const norm = v => String(v).toLowerCase().replace(/\s+/g, ' ').trim();
+    const rulesNorm = new Map(Object.entries(rules).map(([k, v]) => [norm(k), v]));
+
     function getAction(name, bikes, hour) {
       if (!Number.isFinite(bikes)) return null;
-      for (const r of (rules[name] || (/austria\s*trend/i.test(name) ? rules['Austria Trend Hotel'] : []))) {
+      const list = rulesNorm.get(norm(name));
+      if (list) for (const r of list) {
         if (r.before !== undefined && !(hour < r.before)) continue;
         if (r.from !== undefined && !(hour >= r.from)) continue;
         if (r.add !== undefined && bikes < r.add) {
@@ -140,8 +159,7 @@
           return { type: 'remove', text: `Remove (until ${r.remove} or fewer)` };
         }
       }
-      // Any empty station without an active rule: treat as "add"
-      if (bikes === 0) return { type: 'add', text: 'Add (station is empty)' };
+      if (bikes === 0) return { type: 'add', text: 'Empty – add bikes', empty: true };
       return null;
     }
 
@@ -155,23 +173,28 @@
     let claims = new Map();   // station_id -> owner id
     let myId = null;
     let claimsCol = null;
+    const pending = new Set();
+
+    // 0 = rule-based action, 1 = empty only (no rule), 2 = others
+    const rank = r => (r.action && !r.action.empty) ? 0 : (r.action ? 1 : 2);
+    const sortRows = () => rowsCache.sort((a, b) =>
+      (!!b.pinned - !!a.pinned) ||
+      (claims.has(b.id) - claims.has(a.id)) ||
+      (rank(a) - rank(b)) ||
+      a.name.localeCompare(b.name, 'de'));
 
     function render() {
-      // Claimed stations first, then stations needing action, then by name
-      const sorted = [...rowsCache].sort((a, b) =>
-        (!!b.pinned - !!a.pinned) ||
-        (claims.has(b.id) - claims.has(a.id)) ||
-        (!!b.action - !!a.action) ||
-        a.name.localeCompare(b.name, 'de'));
-      list.innerHTML = sorted.map(r => {
-        const owner = claims.get(r.id);
-        const mine = owner && owner.mine;
-        const cls = [r.action ? r.action.type : '', owner ? 'claimed' : ''].join(' ').trim();
+      sortRows();
+      list.innerHTML = rowsCache.map(r => {
+        const c = claims.get(r.id);
+        const owner = !!c;
+        const mine = owner && c.mine;
+        const cls = [r.action ? r.action.type : '', r.bikes === 0 ? 'zero' : '', owner ? 'claimed' : ''].filter(Boolean).join(' ');
         let claimHtml = '';
         if (claimsCol) {
           claimHtml = owner
-            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Claimed by ' + escapeHtml(owner.name || 'someone')} · ${Math.max(1, Math.ceil(owner.left / 60000))} min left</span>${mine ? `<button class="cbtn" data-act="release" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Release</button>` : ''}</div>`
-            : `<div class="claim"><span class="who">Not claimed</span><button class="cbtn" data-act="claim" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">Claim</button></div>`;
+            ? `<div class="claim"><span class="who">${mine ? '✋ Claimed by you' : '🔒 Claimed by ' + escapeHtml(c.name || 'Someone')}</span>${(mine || isAdmin()) ? `<button class="cbtn" data-act="release" ${pending.has(r.id) ? 'disabled' : ''} data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">${pending.has(r.id) ? '⏳' : 'Release'}</button>` : ''}</div>`
+            : `<div class="claim"><span class="who">Not claimed</span><button class="cbtn" data-act="claim" ${pending.has(r.id) ? 'disabled' : ''} data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}">${pending.has(r.id) ? '⏳' : 'Claim'}</button></div>`;
         }
         return `
           <li class="${cls}" data-id="${escapeHtml(r.id)}" data-name="${escapeHtml(r.name)}" style="cursor:pointer">
@@ -200,18 +223,21 @@
       const li = e.target.closest('li[data-id]');
       if (!li || !claimsCol || !myId) return;
       const { id, name } = li.dataset;
-      const owner = claims.get(id);
-      if (owner && !owner.mine) return;
-      if (!owner && !getName()) return;
-      const act = owner ? 'release' : 'claim';
-      const b = li.querySelector('button') || document.createElement('button');
-            b.disabled = true;
+      const c = claims.get(id);
+      if (c && !c.mine && !isAdmin()) return;
+      const act = c ? 'release' : 'claim';
+      if (pending.has(id)) return;
+      pending.add(id);
+      render();
       try {
-        const r = await api('POST', { id, action: act });
-        if (!r.ok && r.status !== 409) { const j = await r.json().catch(() => ({})); throw new Error(j.error || ('HTTP ' + r.status)); }
+        const r = await api('POST', { id, action: act, name: getName(), stationName: name });
+        if (!r.ok && r.status !== 409) throw new Error('HTTP ' + r.status);
         await loadClaims();
       } catch (err) {
         meta.textContent = 'Could not save (' + err.message + ')';
+      } finally {
+        pending.delete(id);
+        render();
       }
     });
 
@@ -223,21 +249,10 @@
       } catch { return null; }
     })();
 
-    function getName() {
-      try {
-        let n = localStorage.getItem('name');
-        if (!n) {
-          n = (prompt('Your name:') || '').trim().slice(0, 30);
-          if (n) localStorage.setItem('name', n);
-        }
-        return n;
-      } catch { return ''; }
-    }
-
     function api(method, body) {
       return fetch('api/claims', {
         method, cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Name': encodeURIComponent(localStorage.getItem('name') || ''), 'X-Key': localStorage.getItem('accessKey') || '' },
+        headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': localStorage.getItem('accessKey') || '', 'X-Admin': localStorage.getItem('adminKey') || '' },
         body: body ? JSON.stringify(body) : undefined
       });
     }
@@ -250,8 +265,8 @@
         return;
       }
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const data = await r.json();               // { stationId: { mine, name, left } }
-      claims = new Map(Object.entries(data));
+      const data = await r.json();               // { stationId: { mine: bool } }
+      claims = new Map(Object.entries(data).map(([id, v]) => [id, { mine: !!v.mine, name: v.name }]));
       render();
     }
 
@@ -281,11 +296,10 @@
           .filter(s => !s.is_virtual_station)
           .map(s => {
             const bikes = statusById.get(s.station_id);
-            return { id: String(s.station_id), name: s.name, bikes, action: getAction(s.name, bikes, hour) };
-          })
-          .sort((a, b) => (!!b.action - !!a.action) || a.name.localeCompare(b.name, 'de'));
-
+            return { id: String(s.station_id), name: displayName(s.name), bikes, action: getAction(s.name, bikes, hour) };
+          });
         rowsCache.unshift(REMISE);
+
         render();
 
         const rows = rowsCache;
@@ -306,8 +320,105 @@
       btn.textContent = 'Refresh';
     });
 
+    // ---- Settings line: name / notifications / admin ----
+    const settingsEl = document.getElementById('settings');
+    const store = {
+      get: k => { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
+      set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} }
+    };
+    const getName = () => store.get('userName').trim();
+    const isAdmin = () => !!store.get('adminKey');
+
+    const pushOk = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    const b64 = s => { const p = '='.repeat((4 - s.length % 4) % 4); const r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(r, c => c.charCodeAt(0)); };
+    const pushApi = (method, body) => fetch('api/push', {
+      method, cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'X-Client': clientId || '', 'X-Key': store.get('accessKey') },
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    let notifState = 'not allowed';
+    async function refreshNotif() {
+      if (!pushOk) notifState = 'unsupported';
+      else if (Notification.permission === 'denied') notifState = 'blocked';
+      else {
+        let sub = null;
+        try { sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription(); } catch {}
+        notifState = (sub && Notification.permission === 'granted') ? 'on' : 'not allowed';
+      }
+      renderSettings();
+    }
+
+    function renderSettings() {
+      const name = getName();
+      const notifOn = notifState === 'on';
+      const adm = isAdmin();
+      settingsEl.innerHTML =
+        `Name: <a data-s="name">${escapeHtml(name || 'unknown')}</a>` +
+        `<span class="sep">·</span>Notifications <button type="button" class="ico${notifOn ? '' : ' off'}" data-s="notif" title="Notifications: ${notifState}" aria-label="Notifications: ${notifState}">🔔</button>` +
+        `<span class="sep">·</span>Admin <button type="button" class="ico${adm ? '' : ' off'}" data-s="admin" title="Admin: ${adm ? 'on' : 'off'}" aria-label="Admin: ${adm ? 'on' : 'off'}">🛡️</button>` +
+        (adm ? `<button type="button" class="ico" data-s="relall" title="Release all" aria-label="Release all">🔓</button>` : '');
+      render();
+    }
+
+    async function toggleNotif() {
+      if (notifState === 'unsupported') { alert('On iPhone: add this page to the Home Screen and open it from there.'); return; }
+      if (notifState === 'blocked') { alert('Notifications are blocked in the browser settings.'); return; }
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub && Notification.permission === 'granted') {
+          await pushApi('POST', { action: 'unsubscribe' });
+          await sub.unsubscribe();
+        } else {
+          const perm = await Notification.requestPermission();
+          if (perm !== 'granted') throw new Error('permission denied');
+          const kr = await pushApi('GET');
+          if (!kr.ok) throw new Error('HTTP ' + kr.status);
+          const { publicKey } = await kr.json();
+          const ns = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(publicKey) });
+          const r = await pushApi('POST', { action: 'subscribe', subscription: ns.toJSON() });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+        }
+      } catch (err) { meta.textContent = 'Notifications: ' + err.message; }
+      refreshNotif();
+    }
+
+    async function toggleAdmin() {
+      if (isAdmin()) { store.set('adminKey', ''); renderSettings(); return; }
+      const pw = prompt('Admin password:');
+      if (!pw) return;
+      store.set('adminKey', pw);
+      try {
+        const r = await api('POST', { action: 'admin' });
+        if (!r.ok) throw new Error('wrong password');
+      } catch (err) { store.set('adminKey', ''); meta.textContent = 'Admin: ' + err.message; }
+      renderSettings();
+    }
+
+    settingsEl.addEventListener('click', async e => {
+      const a = e.target.closest('[data-s]');
+      if (!a) return;
+      const k = a.dataset.s;
+      if (k === 'name') {
+        const v = prompt('Your name:', getName());
+        if (v !== null) { store.set('userName', v.trim().slice(0, 30)); renderSettings(); }
+      } else if (k === 'notif') toggleNotif();
+      else if (k === 'admin') toggleAdmin();
+      else if (k === 'relall') {
+        if (!confirm('Release ALL claims?')) return;
+        try {
+          const r = await api('POST', { action: 'releaseAll' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          await loadClaims();
+        } catch (err) { meta.textContent = 'Could not release (' + err.message + ')'; }
+      }
+    });
+
     updateTable();
     initClaims();
+    renderSettings();
+    refreshNotif();
   </script>
   <script>if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));</script>
 </body>
